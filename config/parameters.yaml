@@ -1,0 +1,30 @@
+dataset:
+  sampling_rate: 12000
+  data_type: "12kHz_Drive_End"
+  files:
+    Normal: "97.mat"
+    Ball_007_0: "118.mat"
+    Ball_021_0: "222.mat"
+    Inner_Race_007_0: "105.mat"
+    Inner_Race_021_0: "209.mat"
+    Outer_Race_007_0: "130.mat"
+
+preprocessing:
+  segment_length: 1024
+  samples_per_class: 200
+  test_size: 0.2      # final test fraction (e.g. 20% of all samples)
+  val_size: 0.10      # final validation fraction (e.g. 10% of all samples)
+  random_state: 42
+
+models:
+  traditional:
+    logistic_regression:
+      max_iter: 1000
+    random_forest:
+      n_estimators: 100
+    svm:
+      kernel: "rbf"
+  deep_learning:
+    epochs: 50
+    batch_size: 32
+    learning_rate: 0.001

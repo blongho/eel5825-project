@@ -1,0 +1,1 @@
+rm -fv models/* && rm -fv results/*.csv && rm -fv data/processed/* && rm -fv results/figures/* 
