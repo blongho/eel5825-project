@@ -498,6 +498,190 @@ def plot_random_forest_feature_importance():
     print(f"-- Saved RandomForest feature importance plot to {out_path}")
 
 
+def plot_confusion_matrices_grid():
+    """
+    Plot ALL models' normalized confusion matrices in a single figure
+    (grid of subplots) and save to results/figures/confusion_matrices_grid.png.
+    """
+    trad_pred_path = os.path.join(RESULTS_DIR, "traditional_predictions.csv")
+    dl_pred_path = os.path.join(RESULTS_DIR, "deep_learning_predictions.csv")
+
+    if not os.path.exists(trad_pred_path) and not os.path.exists(dl_pred_path):
+        print("⚠️ No prediction CSVs found for confusion matrix grid.")
+        return
+
+    label_indices, class_names = load_label_map()
+    if label_indices is None:
+        print("⚠️ Could not load label_map.json; skipping confusion matrix grid.")
+        return
+
+    # Load and concatenate predictions from all models
+    dfs = []
+    if os.path.exists(trad_pred_path):
+        dfs.append(pd.read_csv(trad_pred_path))
+    if os.path.exists(dl_pred_path):
+        dfs.append(pd.read_csv(dl_pred_path))
+
+    preds_df = pd.concat(dfs, ignore_index=True)
+
+    model_names = sorted(preds_df["model"].unique())
+    n_models = len(model_names)
+
+    if n_models == 0:
+        print("⚠️ No models found in predictions; skipping confusion matrix grid.")
+        return
+
+    # Decide grid layout (e.g., up to 3 columns)
+    n_cols = min(3, n_models)
+    n_rows = int(np.ceil(n_models / n_cols))
+
+    fig, axes = plt.subplots(
+        n_rows,
+        n_cols,
+        figsize=(5 * n_cols, 4.5 * n_rows),
+    )
+
+    # If there is only one row/col, axes may not be a 2D array
+    if n_rows == 1 and n_cols == 1:
+        axes = np.array([[axes]])
+    elif n_rows == 1:
+        axes = np.array([axes])
+    elif n_cols == 1:
+        axes = np.array([[ax] for ax in axes])
+
+    axes_flat = axes.flatten()
+
+    for ax, model_name in zip(axes_flat, model_names):
+        model_df = preds_df[preds_df["model"] == model_name]
+
+        y_true = model_df["true_label"].values
+        y_pred = model_df["predicted_label"].values
+
+        cm = confusion_matrix(y_true, y_pred, labels=label_indices)
+        cm_norm = cm.astype("float") / cm.sum(axis=1, keepdims=True)
+
+        sns.heatmap(
+            cm_norm,
+            annot=True,
+            fmt=".2f",
+            cmap="Blues",
+            xticklabels=class_names,
+            yticklabels=class_names,
+            ax=ax,
+            cbar=False,
+        )
+        ax.set_title(model_name)
+        ax.set_xlabel("Predicted")
+        ax.set_ylabel("True")
+        ax.tick_params(axis="x", rotation=45)
+        ax.tick_params(axis="y", rotation=0)
+
+    # Turn off any unused subplots
+    for ax in axes_flat[len(model_names) :]:
+        ax.axis("off")
+
+    plt.tight_layout()
+    out_path = os.path.join(GRAPHS_DIR, "confusion_matrices_grid.png")
+    plt.savefig(out_path, dpi=300)
+    plt.close()
+    print(f"🔍 Saved confusion matrix grid for all models to {out_path}")
+
+
+def plot_roc_curves_for_model(model_name, proba_filename, title_suffix=""):
+    """
+    Plot one-vs-rest ROC curves for a single model using its *_proba.csv file.
+
+    Parameters
+    ----------
+    model_name : str
+        Display name of the model (e.g., 'RandomForest', '1D CNN').
+    proba_filename : str
+        CSV file under RESULTS_DIR containing columns:
+            class_0, class_1, ..., class_(K-1), true_label
+    title_suffix : str
+        Optional extra text to append to the plot title.
+    """
+    proba_path = os.path.join(RESULTS_DIR, proba_filename)
+    if not os.path.exists(proba_path):
+        print(f"⚠️ Probability file not found for {model_name}: {proba_path}")
+        return
+
+    label_indices, class_names = load_label_map()
+    if label_indices is None:
+        print("⚠️ Could not load label_map.json; skipping ROC for", model_name)
+        return
+
+    df = pd.read_csv(proba_path)
+    if "true_label" not in df.columns:
+        print(
+            f"⚠️ 'true_label' column missing in {proba_path}; skipping ROC for {model_name}"
+        )
+        return
+
+    y_true = df["true_label"].values
+    # Extract probability columns (assumed sorted by class index)
+    proba_cols = [c for c in df.columns if c.startswith("class_")]
+    y_proba = df[proba_cols].values
+
+    n_classes = len(proba_cols)
+    if n_classes != len(label_indices):
+        print(
+            f"⚠️ Number of prob columns ({n_classes}) does not match label indices "
+            f"({len(label_indices)}); ROC for {model_name} may be incorrect."
+        )
+
+    # One-vs-rest ROC for each class
+    plt.figure(figsize=(7, 6))
+    for i, class_idx in enumerate(label_indices):
+        # binary ground truth for class i
+        y_true_binary = (y_true == class_idx).astype(int)
+        y_score = y_proba[:, i]
+
+        fpr, tpr, _ = roc_curve(y_true_binary, y_score)
+        roc_auc = auc(fpr, tpr)
+
+        label = f"{class_names[i]} (AUC = {roc_auc:.3f})"
+        plt.plot(fpr, tpr, lw=1.5, label=label)
+
+    # Diagonal
+    plt.plot([0, 1], [0, 1], "k--", lw=1)
+
+    plt.xlim([0.0, 1.0])
+    plt.ylim([0.0, 1.05])
+    plt.xlabel("False Positive Rate")
+    plt.ylabel("True Positive Rate")
+    plt.title(f"ROC Curves (one-vs-rest) - {model_name}{title_suffix}")
+    plt.legend(loc="lower right", fontsize=8)
+    plt.tight_layout()
+
+    # File-friendly name
+    stem = model_name.replace(" ", "").lower()
+    out_path = os.path.join(GRAPHS_DIR, f"roc_curve_{stem}.png")
+    plt.savefig(out_path, dpi=300)
+    plt.close()
+    print(f"📈 Saved ROC curves for {model_name} to {out_path}")
+
+
+def plot_roc_curves():
+    """
+    Plot ROC curves (one-vs-rest) for models that have *_proba.csv saved.
+    Currently:
+      - RandomForest_proba.csv
+      - 1D_CNN_proba.csv
+    """
+    # Random Forest (traditional)
+    plot_roc_curves_for_model(
+        model_name="RandomForest",
+        proba_filename="RandomForest_proba.csv",
+    )
+
+    # 1D CNN (deep learning, file name stem '1D_CNN')
+    plot_roc_curves_for_model(
+        model_name="1D CNN",
+        proba_filename="1D_CNN_proba.csv",
+    )
+
+
 # ---------------------------------------------------------------------
 # MAIN
 # ---------------------------------------------------------------------
@@ -510,7 +694,8 @@ def main():
     plot_dl_training_curves()
     plot_confusion_matrices()
     plot_random_forest_feature_importance()
-    plot_roc_curves(best_models=["RandomForest", "1D CNN"])
+    plot_confusion_matrices_grid()
+    plot_roc_curves() 
     print("--  Plot generation completed.")
 
 
